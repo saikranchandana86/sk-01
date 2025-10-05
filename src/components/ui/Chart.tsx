@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ComponentData } from '../../types';
 import { useAppStore } from '../../store/useAppStore';
 import { evaluateExpression } from '../../utils/expressionEvaluator';
-import { BarChart3, LineChart, PieChart, TrendingUp, Download, RefreshCw, Maximize2 } from 'lucide-react';
+import { BarChart3, LineChart, PieChart, TrendingUp, Download, RefreshCw, Maximize2, Sparkles, Zap } from 'lucide-react';
 
 interface ChartSeries {
   title: string;
@@ -51,14 +51,104 @@ export const Chart: React.FC<ChartComponentProps> = ({ component }) => {
   const [selectedDataPoint, setSelectedDataPoint] = useState<DataPoint | null>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showRecommendations, setShowRecommendations] = useState(false);
+  const [animationProgress, setAnimationProgress] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { components, apis, globalState, sqlQueries } = useAppStore();
+
+  useEffect(() => {
+    if (props.animateLoading && animationProgress < 100) {
+      const timer = setInterval(() => {
+        setAnimationProgress(prev => Math.min(prev + 2, 100));
+      }, 20);
+      return () => clearInterval(timer);
+    }
+  }, [props.animateLoading, animationProgress]);
 
   const baseStyle = {
     width: '100%',
     height: '100%',
     ...component.style,
   };
+
+  const smartRecommendations = useMemo(() => {
+    const recommendations: Array<{
+      apiId: string;
+      apiName: string;
+      confidence: number;
+      suggestion: string;
+      reason: string;
+      fields: string[];
+    }> = [];
+
+    apis.forEach(api => {
+      if (!api.response?.body) return;
+
+      const data = api.response.body;
+      let confidence = 0;
+      let fields: string[] = [];
+      let reason = '';
+
+      if (Array.isArray(data)) {
+        confidence += 40;
+        reason = 'API returns array data';
+
+        if (data.length > 0) {
+          const firstItem = data[0];
+          if (typeof firstItem === 'object') {
+            confidence += 30;
+            fields = Object.keys(firstItem);
+
+            const numericFields = fields.filter(f => typeof firstItem[f] === 'number');
+            const stringFields = fields.filter(f => typeof firstItem[f] === 'string');
+
+            if (numericFields.length > 0 && stringFields.length > 0) {
+              confidence += 30;
+              reason += ', has both labels and values';
+            }
+          }
+        }
+      } else if (data && typeof data === 'object' && 'data' in data && Array.isArray(data.data)) {
+        confidence += 35;
+        reason = 'API has nested data array';
+        const innerData = data.data;
+        if (innerData.length > 0 && typeof innerData[0] === 'object') {
+          confidence += 35;
+          fields = Object.keys(innerData[0]);
+          reason += ', contains objects with fields';
+        }
+      }
+
+      if (confidence > 50) {
+        const numericFields = fields.filter(f => {
+          const val = Array.isArray(data) ? data[0]?.[f] : data?.data?.[0]?.[f];
+          return typeof val === 'number';
+        });
+        const stringFields = fields.filter(f => {
+          const val = Array.isArray(data) ? data[0]?.[f] : data?.data?.[0]?.[f];
+          return typeof val === 'string';
+        });
+
+        const valueField = numericFields[0] || fields.find(f => f.toLowerCase().includes('value'));
+        const labelField = stringFields[0] || fields.find(f => f.toLowerCase().includes('name') || f.toLowerCase().includes('label'));
+
+        const suggestion = Array.isArray(data)
+          ? `{{${api.id}.data.map(item => ({ x: item.${labelField || fields[0]}, y: item.${valueField || fields[1]} }))}}`
+          : `{{${api.id}.data.data.map(item => ({ x: item.${labelField || fields[0]}, y: item.${valueField || fields[1]} }))}}`;
+
+        recommendations.push({
+          apiId: api.id,
+          apiName: api.name,
+          confidence,
+          suggestion,
+          reason,
+          fields
+        });
+      }
+    });
+
+    return recommendations.sort((a, b) => b.confidence - a.confidence);
+  }, [apis]);
 
   const evaluatedSeries = useMemo(() => {
     const context = { components, apis, sqlQueries, globalState } as any;
@@ -209,31 +299,94 @@ export const Chart: React.FC<ChartComponentProps> = ({ component }) => {
             <h3 className="text-lg font-semibold text-gray-700 mb-2">No Chart Data</h3>
             <p className="text-sm mb-4">Follow these steps to visualize your data:</p>
 
-            <div className="bg-gray-50 rounded-lg p-4 text-left space-y-3 mb-4">
+            <div className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-lg p-4 text-left space-y-3 mb-4 border border-blue-200">
               <div className="flex gap-3">
-                <div className="flex-shrink-0 w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center text-xs font-bold">1</div>
+                <div className="flex-shrink-0 w-6 h-6 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-full flex items-center justify-center text-xs font-bold shadow-sm">1</div>
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-800">Create or Run an API</p>
+                  <p className="text-sm font-semibold text-gray-800">Create or Run an API</p>
                   <p className="text-xs text-gray-600 mt-0.5">Go to APIs panel and create an API, or click "Setup Demo API"</p>
                 </div>
               </div>
 
               <div className="flex gap-3">
-                <div className="flex-shrink-0 w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center text-xs font-bold">2</div>
+                <div className="flex-shrink-0 w-6 h-6 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-full flex items-center justify-center text-xs font-bold shadow-sm">2</div>
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-800">Bind Data in Properties</p>
+                  <p className="text-sm font-semibold text-gray-800">Bind Data in Properties</p>
                   <p className="text-xs text-gray-600 mt-0.5">Select this chart, open Properties → Data → Chart series</p>
                 </div>
               </div>
 
               <div className="flex gap-3">
-                <div className="flex-shrink-0 w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center text-xs font-bold">3</div>
+                <div className="flex-shrink-0 w-6 h-6 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-full flex items-center justify-center text-xs font-bold shadow-sm">3</div>
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-800">Type {'{{'} to see autocomplete</p>
-                  <p className="text-xs text-gray-600 mt-0.5">Example: <code className="bg-gray-200 px-1 rounded text-xs">{`{{apiName.data.map(item => ({x: item.label, y: item.value}))}}`}</code></p>
+                  <p className="text-sm font-semibold text-gray-800">Type {'{{'} to see autocomplete</p>
+                  <p className="text-xs text-gray-600 mt-0.5">Example: <code className="bg-white px-1.5 py-0.5 rounded text-xs border border-gray-300 font-mono">{`{{apiName.data.map(item => ({x: item.label, y: item.value}))}}`}</code></p>
                 </div>
               </div>
             </div>
+
+            {smartRecommendations.length > 0 && (
+              <div className="mb-4">
+                <button
+                  onClick={() => setShowRecommendations(!showRecommendations)}
+                  className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-lg hover:from-emerald-600 hover:to-teal-600 transition-all shadow-md hover:shadow-lg transform hover:scale-[1.02]"
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5" />
+                    <span className="font-semibold">Smart Recommendations ({smartRecommendations.length})</span>
+                  </div>
+                  <Zap className="w-4 h-4" />
+                </button>
+
+                {showRecommendations && (
+                  <div className="mt-3 space-y-2 max-h-96 overflow-y-auto">
+                    {smartRecommendations.map((rec, idx) => (
+                      <div
+                        key={rec.apiId}
+                        className="bg-white border-2 border-emerald-200 rounded-lg p-3 hover:border-emerald-400 transition-all cursor-pointer shadow-sm hover:shadow-md"
+                        onClick={() => {
+                          navigator.clipboard.writeText(rec.suggestion);
+                        }}
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className="text-xs font-bold px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full">
+                              {rec.confidence}% match
+                            </div>
+                            <h4 className="text-sm font-semibold text-gray-800">{rec.apiName}</h4>
+                          </div>
+                          <button
+                            className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(rec.suggestion);
+                            }}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-600 mb-2">{rec.reason}</p>
+                        <div className="bg-gray-50 p-2 rounded border border-gray-200">
+                          <code className="text-xs text-gray-800 break-all">{rec.suggestion}</code>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {rec.fields.slice(0, 5).map(field => (
+                            <span key={field} className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded">
+                              {field}
+                            </span>
+                          ))}
+                          {rec.fields.length > 5 && (
+                            <span className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded">
+                              +{rec.fields.length - 5} more
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {props.series.length > 0 && (
               <div className="mt-4 text-xs text-left">
@@ -282,6 +435,7 @@ export const Chart: React.FC<ChartComponentProps> = ({ component }) => {
     const padding = { top: 20, right: 20, bottom: 60, left: 60 };
     const barWidth = Math.min(40, chartWidth / allLabels.length / evaluatedSeries.length - 10);
     const groupWidth = barWidth * evaluatedSeries.length + 10;
+    const progress = props.animateLoading ? animationProgress / 100 : 1;
 
     return (
       <div className="relative w-full h-full p-4">
@@ -320,7 +474,7 @@ export const Chart: React.FC<ChartComponentProps> = ({ component }) => {
                   const dataPoint = series.data.find(d => String(d.x) === label);
                   if (!dataPoint) return null;
 
-                  const barHeight = ((dataPoint.y / maxValue) * (chartHeight - padding.top - padding.bottom));
+                  const barHeight = ((dataPoint.y / maxValue) * (chartHeight - padding.top - padding.bottom)) * progress;
                   const x = groupX + seriesIndex * (barWidth + 1);
                   const y = chartHeight - padding.bottom - barHeight;
 
@@ -334,10 +488,11 @@ export const Chart: React.FC<ChartComponentProps> = ({ component }) => {
                         width={barWidth}
                         height={barHeight}
                         fill={series.color}
-                        opacity={isHovered ? 0.8 : 1}
+                        opacity={isHovered ? 0.85 : 1}
                         style={{
                           cursor: 'pointer',
-                          transition: 'opacity 0.2s'
+                          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                          filter: isHovered ? 'drop-shadow(0 4px 6px rgba(0,0,0,0.1))' : 'none'
                         }}
                         onClick={() => handleDataPointClick(dataPoint, seriesIndex)}
                         onMouseEnter={() => setHoveredIndex(labelIndex * 100 + seriesIndex)}
@@ -469,15 +624,24 @@ export const Chart: React.FC<ChartComponentProps> = ({ component }) => {
                   strokeWidth="0.5"
                   strokeLinejoin="round"
                   strokeLinecap="round"
+                  style={{
+                    transition: 'all 0.3s ease-in-out',
+                    strokeDasharray: props.animateLoading ? '5,5' : 'none',
+                    strokeDashoffset: props.animateLoading ? animationProgress : 0
+                  }}
                 />
                 {points.map((point, pointIndex) => point.data && (
                   <circle
                     key={pointIndex}
                     cx={point.x}
                     cy={point.y}
-                    r="1"
+                    r={hoveredIndex === seriesIndex * 1000 + pointIndex ? "1.5" : "1"}
                     fill={series.color}
-                    style={{ cursor: 'pointer' }}
+                    style={{
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease-in-out',
+                      filter: hoveredIndex === seriesIndex * 1000 + pointIndex ? 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' : 'none'
+                    }}
                     onClick={() => handleDataPointClick(point.data!, seriesIndex)}
                     onMouseEnter={() => setHoveredIndex(seriesIndex * 1000 + pointIndex)}
                     onMouseLeave={() => setHoveredIndex(null)}
@@ -662,10 +826,10 @@ export const Chart: React.FC<ChartComponentProps> = ({ component }) => {
         borderRadius: props.borderRadius !== undefined ? `${props.borderRadius}px` : '8px',
         borderStyle: 'solid'
       }}
-      className={`flex flex-col overflow-hidden ${props.animateLoading ? 'animate-pulse' : ''}`}
+      className="flex flex-col overflow-hidden transition-all duration-300"
     >
       {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+      <div className="px-4 py-3 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-2">
           {props.chartType === 'line' || props.chartType === 'area' ? (
             <LineChart className="w-4 h-4 text-gray-600" />
@@ -679,21 +843,24 @@ export const Chart: React.FC<ChartComponentProps> = ({ component }) => {
         <div className="flex items-center gap-2">
           <button
             onClick={exportChart}
-            className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-white rounded transition-all hover:shadow-sm"
             title="Export data"
           >
             <Download className="w-4 h-4" />
           </button>
           <button
-            onClick={() => window.location.reload()}
-            className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+            onClick={() => {
+              setAnimationProgress(0);
+              window.location.reload();
+            }}
+            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-white rounded transition-all hover:shadow-sm"
             title="Refresh"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
           <button
             onClick={() => setIsFullscreen(!isFullscreen)}
-            className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-white rounded transition-all hover:shadow-sm"
             title="Fullscreen"
           >
             <Maximize2 className="w-4 h-4" />
@@ -708,16 +875,16 @@ export const Chart: React.FC<ChartComponentProps> = ({ component }) => {
 
       {/* Legend */}
       {props.showLegend && evaluatedSeries.length > 0 && (
-        <div className={`px-4 py-3 border-t border-gray-200 bg-gray-50 flex ${
+        <div className={`px-4 py-3 border-t border-gray-200 bg-gradient-to-r from-gray-50 to-gray-100 flex ${
           props.legendPosition === 'top' || props.legendPosition === 'bottom' ? 'flex-row' : 'flex-col'
         } gap-4 flex-wrap`}>
           {evaluatedSeries.map((series, index) => (
-            <div key={index} className="flex items-center gap-2">
+            <div key={index} className="flex items-center gap-2 group cursor-pointer transition-transform hover:scale-105">
               <div
-                className="w-3 h-3 rounded"
+                className="w-3 h-3 rounded transition-all group-hover:shadow-md"
                 style={{ backgroundColor: series.color }}
               />
-              <span className="text-sm text-gray-700">{series.title}</span>
+              <span className="text-sm text-gray-700 group-hover:text-gray-900 transition-colors">{series.title}</span>
             </div>
           ))}
         </div>
@@ -725,9 +892,9 @@ export const Chart: React.FC<ChartComponentProps> = ({ component }) => {
 
       {/* Selected Data Point Info */}
       {selectedDataPoint && (
-        <div className="px-4 py-2 border-t border-blue-200 bg-blue-50 text-sm">
-          <span className="font-medium text-blue-900">Selected:</span>{' '}
-          <span className="text-blue-700">
+        <div className="px-4 py-2 border-t border-blue-200 bg-gradient-to-r from-blue-50 to-cyan-50 text-sm animate-in slide-in-from-bottom">
+          <span className="font-semibold text-blue-900">Selected:</span>{' '}
+          <span className="text-blue-700 font-medium">
             {selectedDataPoint.x} = {selectedDataPoint.y}
           </span>
         </div>
